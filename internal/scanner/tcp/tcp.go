@@ -5,15 +5,15 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"maki/internal/scanner"
 )
-
-// Common ports to scan (standard network services).
-var commonPorts = []int{21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 3389, 8080}
 
 // Scanner implements the Scanner interface for TCP connect scanning.
 type Scanner struct {
@@ -22,11 +22,56 @@ type Scanner struct {
 }
 
 // New creates a new TCP scanner with the specified timeout.
+// It loads the common ports from the commonPorts.txt file.
 func New(timeout time.Duration) *Scanner {
+	ports := loadCommonPorts()
 	return &Scanner{
 		timeout: timeout,
-		ports:   commonPorts,
+		ports:   ports,
 	}
+}
+
+// loadCommonPorts reads and parses the commonPorts.txt file.
+func loadCommonPorts() []int {
+	// Try to read the commonPorts.txt file
+	data, err := os.ReadFile("internal/commonPorts.txt")
+	if err != nil {
+		// Fallback to a minimal set of common ports if file doesn't exist
+		fmt.Printf("Warning: Could not read commonPorts.txt, using minimal port list: %v\n", err)
+		return []int{21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 3389, 8080}
+	}
+
+	// Parse comma-separated port numbers
+	portStrings := strings.Split(strings.TrimSpace(string(data)), ",")
+	ports := make([]int, 0, len(portStrings))
+
+	for _, portStr := range portStrings {
+		portStr = strings.TrimSpace(portStr)
+		if portStr == "" {
+			continue
+		}
+
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			fmt.Printf("Warning: Invalid port number '%s', skipping\n", portStr)
+			continue
+		}
+
+		if port < 1 || port > 65535 {
+			fmt.Printf("Warning: Port %d out of range (1-65535), skipping\n", port)
+			continue
+		}
+
+		ports = append(ports, port)
+	}
+
+	if len(ports) == 0 {
+		fmt.Println("Warning: No valid ports found in commonPorts.txt, using minimal port list")
+		return []int{21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 993, 995, 3389, 8080}
+	}
+
+	fmt.Printf("Loaded %d ports from commonPorts.txt\n", len(ports))
+	return ports
 }
 
 // Name returns the human-readable name of this scanner.
