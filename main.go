@@ -12,6 +12,7 @@ import (
 	"maki/internal/network"
 	"maki/internal/output"
 	"maki/internal/scanner"
+	"maki/internal/scanner/arp"
 	"maki/internal/scanner/icmp"
 	"maki/internal/scanner/tcp"
 )
@@ -20,10 +21,10 @@ func main() {
 	printBanner()
 
 	// Get subnet from user
-	subnet := getUserInput("Enter target subnet (e.g., 192.168.1.0/24): ")
+	subnet := getUserInput("Enter target subnet (default: 192.168.1.0/24): ")
 	if subnet == "" {
-		fmt.Println("Error: No subnet provided")
-		os.Exit(1)
+		subnet = "192.168.1.0/24"
+		fmt.Printf("Using default subnet: %s\n", subnet)
 	}
 
 	// Parse the subnet
@@ -54,8 +55,11 @@ func main() {
 	case "2":
 		runTCPScan(ctx, targets, report, timeout)
 	case "3":
+		runARPScan(ctx, targets, report, timeout)
+	case "4":
 		runICMPScan(ctx, targets, report, timeout)
 		runTCPScan(ctx, targets, report, timeout)
+		runARPScan(ctx, targets, report, timeout)
 	default:
 		fmt.Println("Invalid choice. Defaulting to ICMP scan.")
 		runICMPScan(ctx, targets, report, timeout)
@@ -92,9 +96,10 @@ func getScanChoice() string {
 	fmt.Println("\nSelect scan type:")
 	fmt.Println("  1. ICMP Ping Scan")
 	fmt.Println("  2. TCP Connect Scan (common ports)")
-	fmt.Println("  3. All Scans Combined")
+	fmt.Println("  3. ARP Scan (local network)")
+	fmt.Println("  4. All Scans Combined")
 	fmt.Println()
-	return getUserInput("Enter your choice (1-3): ")
+	return getUserInput("Enter your choice (1-4): ")
 }
 
 func runICMPScan(ctx context.Context, targets []string, report *output.Report, timeout time.Duration) {
@@ -119,6 +124,18 @@ func runTCPScan(ctx context.Context, targets []string, report *output.Report, ti
 
 	report.AddScan(output.ScanTypeTCP, results)
 	printResults(results, "TCP Connect Scan")
+}
+
+func runARPScan(ctx context.Context, targets []string, report *output.Report, timeout time.Duration) {
+	fmt.Println("\n📡 Starting ARP Scan...")
+	fmt.Println()
+
+	arpScanner := arp.New(timeout)
+	scanEngine := engine.New(arpScanner, 0)
+	results := scanEngine.Scan(ctx, targets)
+
+	report.AddScan(output.ScanTypeARP, results)
+	printResults(results, "ARP Scan")
 }
 
 func printResults(results []scanner.Result, scanName string) {
