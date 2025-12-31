@@ -13,6 +13,7 @@ import (
 	"maki/internal/output"
 	"maki/internal/scanner"
 	"maki/internal/scanner/icmp"
+	"maki/internal/scanner/tcp"
 )
 
 func main() {
@@ -32,32 +33,33 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n📡 Target range: %s (%d hosts)\n\n", subnet, len(targets))
+	fmt.Printf("\n📡 Target range: %s (%d hosts)\n", subnet, len(targets))
+
+	// Get scan type choice
+	scanChoice := getScanChoice()
 
 	// Ask for output directory
-	outputDir := getUserInput("Enter output directory path (leave empty to skip file export): ")
+	outputDir := getUserInput("\nEnter output directory path (leave empty to skip file export): ")
 
 	// Create report
 	report := output.NewReport(subnet)
 
-	// For now, only ICMP scan is available
-	fmt.Println("\nStarting ICMP Ping Scan...")
-	fmt.Println()
-
-	// Create scanner and engine
-	timeout := 2 * time.Second
-	icmpScanner := icmp.New(timeout)
-	scanEngine := engine.New(icmpScanner, 0) // 0 = auto-detect workers
-
-	// Run the scan
+	// Execute scan based on user choice
 	ctx := context.Background()
-	results := scanEngine.Scan(ctx, targets)
+	timeout := 2 * time.Second
 
-	// Add results to report
-	report.AddScan(output.ScanTypeICMP, results)
-
-	// Print results to console
-	printResults(results)
+	switch scanChoice {
+	case "1":
+		runICMPScan(ctx, targets, report, timeout)
+	case "2":
+		runTCPScan(ctx, targets, report, timeout)
+	case "3":
+		runICMPScan(ctx, targets, report, timeout)
+		runTCPScan(ctx, targets, report, timeout)
+	default:
+		fmt.Println("Invalid choice. Defaulting to ICMP scan.")
+		runICMPScan(ctx, targets, report, timeout)
+	}
 
 	// Export to file if path provided
 	if outputDir != "" {
@@ -86,10 +88,43 @@ func getUserInput(prompt string) string {
 	return strings.TrimSpace(input)
 }
 
-func printResults(results []scanner.Result) {
+func getScanChoice() string {
+	fmt.Println("\nSelect scan type:")
+	fmt.Println("  1. ICMP Ping Scan")
+	fmt.Println("  2. TCP Connect Scan (common ports)")
+	fmt.Println("  3. All Scans Combined")
+	fmt.Println()
+	return getUserInput("Enter your choice (1-3): ")
+}
+
+func runICMPScan(ctx context.Context, targets []string, report *output.Report, timeout time.Duration) {
+	fmt.Println("\n🏓 Starting ICMP Ping Scan...")
+	fmt.Println()
+
+	icmpScanner := icmp.New(timeout)
+	scanEngine := engine.New(icmpScanner, 0)
+	results := scanEngine.Scan(ctx, targets)
+
+	report.AddScan(output.ScanTypeICMP, results)
+	printResults(results, "ICMP Ping Scan")
+}
+
+func runTCPScan(ctx context.Context, targets []string, report *output.Report, timeout time.Duration) {
+	fmt.Println("\n🔌 Starting TCP Connect Scan...")
+	fmt.Println()
+
+	tcpScanner := tcp.New(timeout)
+	scanEngine := engine.New(tcpScanner, 0)
+	results := scanEngine.Scan(ctx, targets)
+
+	report.AddScan(output.ScanTypeTCP, results)
+	printResults(results, "TCP Connect Scan")
+}
+
+func printResults(results []scanner.Result, scanName string) {
 	fmt.Println()
 	fmt.Println("════════════════════════════════════════════════════════════════")
-	fmt.Println("                        SCAN RESULTS                            ")
+	fmt.Printf("                    %s RESULTS                    \n", strings.ToUpper(scanName))
 	fmt.Println("════════════════════════════════════════════════════════════════")
 
 	aliveCount := 0
