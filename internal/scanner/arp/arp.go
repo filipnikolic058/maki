@@ -17,12 +17,14 @@ import (
 // Scanner implements ARP scanning using the arping utility.
 type Scanner struct {
 	timeout time.Duration
+	iface   string
 }
 
-// New creates a new ARP scanner with the given timeout.
-func New(timeout time.Duration) *Scanner {
+// New creates a new ARP scanner with the given timeout and network interface.
+func New(timeout time.Duration, iface string) *Scanner {
 	return &Scanner{
 		timeout: timeout,
+		iface:   iface,
 	}
 }
 
@@ -68,11 +70,11 @@ func (s *Scanner) arpPing(ctx context.Context, ip string) (string, error) {
 
 	switch runtime.GOOS {
 	case "linux":
-		// arping -c 1 -w timeout IP
-		cmd = exec.CommandContext(ctx, "arping", "-c", "1", "-w", fmt.Sprintf("%d", int(s.timeout.Seconds())), ip)
+		// arping -c 1 -w timeout -I interface IP
+		cmd = exec.CommandContext(ctx, "arping", "-c", "1", "-w", fmt.Sprintf("%d", int(s.timeout.Seconds())), "-I", s.iface, ip)
 	case "darwin":
-		// arping -c 1 -W timeout IP
-		cmd = exec.CommandContext(ctx, "arping", "-c", "1", "-W", fmt.Sprintf("%d", s.timeout.Milliseconds()), ip)
+		// arping -c 1 -W timeout -i interface IP
+		cmd = exec.CommandContext(ctx, "arping", "-c", "1", "-W", fmt.Sprintf("%d", s.timeout.Milliseconds()), "-i", s.iface, ip)
 	default:
 		return "", fmt.Errorf("arping not supported on %s", runtime.GOOS)
 	}

@@ -39,6 +39,16 @@ func main() {
 	// Get scan type choice
 	scanChoice := getScanChoice()
 
+	// Get network interface if ARP scan is selected
+	var networkInterface string
+	if scanChoice == "3" || scanChoice == "4" {
+		networkInterface = getUserInput("\nEnter network interface for ARP scan (e.g., eth0, wlan0): ")
+		if networkInterface == "" {
+			fmt.Println("Error: Network interface is required for ARP scan")
+			os.Exit(1)
+		}
+	}
+
 	// Ask for output directory
 	outputDir := getUserInput("\nEnter output directory path (leave empty to skip file export): ")
 
@@ -48,6 +58,7 @@ func main() {
 	// Execute scan based on user choice
 	ctx := context.Background()
 	timeout := 2 * time.Second
+	arpTimeout := 5 * time.Second // ARP needs more time for broadcast/response
 
 	switch scanChoice {
 	case "1":
@@ -55,11 +66,11 @@ func main() {
 	case "2":
 		runTCPScan(ctx, targets, report, timeout)
 	case "3":
-		runARPScan(ctx, targets, report, timeout)
+		runARPScan(ctx, targets, report, arpTimeout, networkInterface)
 	case "4":
 		runICMPScan(ctx, targets, report, timeout)
 		runTCPScan(ctx, targets, report, timeout)
-		runARPScan(ctx, targets, report, timeout)
+		runARPScan(ctx, targets, report, arpTimeout, networkInterface)
 	default:
 		fmt.Println("Invalid choice. Defaulting to ICMP scan.")
 		runICMPScan(ctx, targets, report, timeout)
@@ -126,11 +137,11 @@ func runTCPScan(ctx context.Context, targets []string, report *output.Report, ti
 	printResults(results, "TCP Connect Scan")
 }
 
-func runARPScan(ctx context.Context, targets []string, report *output.Report, timeout time.Duration) {
-	fmt.Println("\n📡 Starting ARP Scan...")
+func runARPScan(ctx context.Context, targets []string, report *output.Report, timeout time.Duration, iface string) {
+	fmt.Printf("\n📡 Starting ARP Scan on interface %s...\n", iface)
 	fmt.Println()
 
-	arpScanner := arp.New(timeout)
+	arpScanner := arp.New(timeout, iface)
 	scanEngine := engine.New(arpScanner, 0)
 	results := scanEngine.Scan(ctx, targets)
 
