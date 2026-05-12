@@ -194,6 +194,16 @@ func (r *Report) SaveToFile(dirPath string) (string, error) {
 	return filePath, nil
 }
 
+// ChownToInvokingUser changes ownership of path to the user who
+// invoked sudo (SUDO_UID/SUDO_GID). No-op when not running under sudo.
+func ChownToInvokingUser(path string) error {
+	uid, gid, ok := sudoOwner()
+	if !ok {
+		return nil
+	}
+	return os.Chown(path, uid, gid)
+}
+
 // sudoOwner returns the UID/GID of the user who invoked sudo, if any.
 func sudoOwner() (int, int, bool) {
 	uidStr := os.Getenv("SUDO_UID")

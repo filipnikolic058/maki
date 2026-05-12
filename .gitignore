@@ -1,3 +1,16 @@
-result.txt
+.claude
+
 todo.txt
+
+# build file
 maki
+
+# result files
+result.txt
+hosts.txt
+nmap.json
+nmap.xml
+
+# results folders
+results
+result

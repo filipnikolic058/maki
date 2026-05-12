@@ -11,6 +11,7 @@ import (
 
 	"maki/internal/engine"
 	"maki/internal/network"
+	nmapscan "maki/internal/nmap"
 	"maki/internal/output"
 	"maki/internal/scanner"
 	"maki/internal/scanner/arp"
@@ -83,11 +84,36 @@ func main() {
 		if err != nil {
 			fmt.Printf("\n❌ Error saving results: %v\n", err)
 		} else {
-			hostsPath := filepath.Join(filepath.Dir(filePath), "hosts.txt")
+			savedDir := filepath.Dir(filePath)
+			hostsPath := filepath.Join(savedDir, "hosts.txt")
 			fmt.Printf("\n✅ Results saved to: %s\n", filePath)
 			fmt.Printf("✅ Host list saved to: %s (use with `nmap -iL %s`)\n", hostsPath, hostsPath)
+
+			maybeRunNmap(hostsPath, savedDir, subnet, len(report.UniqueHosts()))
 		}
 	}
+}
+
+func maybeRunNmap(hostsPath, outputDir, subnet string, aliveCount int) {
+	if aliveCount == 0 {
+		return
+	}
+
+	fmt.Println()
+	answer := strings.ToLower(getUserInput("Map this network with nmap -A -F? (y/N): "))
+	if answer != "y" && answer != "yes" {
+		return
+	}
+
+	fmt.Println("\n🗺️  Running nmap -A -F (this may take a while)...")
+	fmt.Println()
+
+	_, jsonPath, err := nmapscan.Run(hostsPath, outputDir, subnet)
+	if err != nil {
+		fmt.Printf("\n❌ nmap scan failed: %v\n", err)
+		return
+	}
+	fmt.Printf("\n✅ Network map saved to: %s\n", jsonPath)
 }
 
 func printBanner() {

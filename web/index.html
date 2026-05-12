@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Maki — Network Map</title>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #273449;
+    --border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --up: #10b981;
+    --down: #64748b;
+    --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+  header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header h1 .accent { color: var(--accent); }
+  #meta { color: var(--muted); font-size: 13px; }
+  #meta strong { color: var(--text); font-weight: 500; }
+  #controls { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  #fileInput { display: none; }
+  .btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  main {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    grid-template-rows: 1fr;
+    overflow: hidden;
+    min-height: 0;
+  }
+  #graph { background: var(--bg); width: 100%; height: 100%; min-height: 0; }
+  #details {
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 20px;
+  }
+  #details .placeholder { color: var(--muted); }
+  #details h2 { margin: 0 0 4px 0; font-size: 18px; color: var(--accent); }
+  #details .sub { color: var(--muted); margin-bottom: 16px; font-size: 13px; }
+  #details h3 {
+    margin: 20px 0 8px 0;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+  dt { color: var(--muted); font-size: 13px; }
+  dd { margin: 0; font-size: 13px; word-break: break-word; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.port { color: var(--accent); font-family: ui-monospace, monospace; }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    background: var(--panel-2);
+    color: var(--muted);
+  }
+  .badge.up { background: rgba(16, 185, 129, 0.15); color: var(--up); }
+
+  #empty {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 14px;
+    padding: 40px;
+    text-align: center;
+  }
+  #empty .hint { margin-top: 8px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🗺️ <span class="accent">Maki</span> Network Map</h1>
+  <div id="meta"></div>
+  <div id="controls">
+    <label class="btn" for="fileInput">Load nmap.json</label>
+    <input id="fileInput" type="file" accept=".json,application/json">
+    <button id="clearBtn" class="btn" type="button" hidden>Clear saved</button>
+  </div>
+</header>
+
+<main id="main">
+  <div id="empty">
+    <div>
+      <div>No data loaded.</div>
+      <div class="hint">Click <em>Load nmap.json</em>, or serve this folder over HTTP with <code>nmap.json</code> next to it. Loaded data is cached in your browser and restored on reload.</div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function nodeColor(host) {
+  if (host.status !== 'up') return '#64748b';
+  const openPorts = host.ports.filter(p => p.state === 'open').length;
+  if (openPorts >= 5) return '#f59e0b';
+  if (openPorts >= 1) return '#38bdf8';
+  return '#10b981';
+}
+
+function nodeLabel(host) {
+  const lines = [host.ip];
+  if (host.hostname) lines.push(host.hostname);
+  return lines.join('\n');
+}
+
+function showError(msg) {
+  $('main').innerHTML =
+    '<div id="empty"><div>' +
+    '<div style="color:#f87171;font-weight:600;margin-bottom:8px;">Failed to render</div>' +
+    '<div class="hint">' + esc(msg) + '</div>' +
+    '</div></div>';
+}
+
+function render(data) {
+  try {
+    renderInner(data);
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  }
+}
+
+const STORAGE_KEY = 'maki.nmap.json';
+
+function saveToStorage(data) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    $('clearBtn').hidden = false;
+  } catch (err) {
+    console.warn('Could not save to localStorage:', err);
+  }
+}
+
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    console.warn('Could not read localStorage:', err);
+    return null;
+  }
+}
+
+function clearStorage() {
+  localStorage.removeItem(STORAGE_KEY);
+  $('clearBtn').hidden = true;
+  $('meta').innerHTML = '';
+  $('main').innerHTML =
+    '<div id="empty"><div>' +
+    '<div>No data loaded.</div>' +
+    '<div class="hint">Click <em>Load nmap.json</em>, or serve this folder over HTTP with <code>nmap.json</code> next to it. Loaded data is cached in your browser and restored on reload.</div>' +
+    '</div></div>';
+}
+
+function renderInner(data) {
+  if (typeof vis === 'undefined') {
+    throw new Error('vis-network library did not load (CDN blocked? open devtools → Network).');
+  }
+  if (!data || !Array.isArray(data.hosts)) {
+    throw new Error('JSON missing "hosts" array — is this a maki nmap.json?');
+  }
+
+  saveToStorage(data);
+
+  // Reset main pane: two children, graph + details.
+  const main = $('main');
+  main.innerHTML = '<div id="graph"></div><aside id="details"><div class="placeholder">Select a host on the map to see details.</div></aside>';
+
+  // Header meta.
+  const ts = data.timestamp ? new Date(data.timestamp).toLocaleString() : '—';
+  $('meta').innerHTML =
+    `<strong>${esc(data.subnet || 'unknown')}</strong> · ` +
+    `${data.hosts.length} host${data.hosts.length === 1 ? '' : 's'} · ` +
+    `scanned ${esc(ts)}`;
+
+  // Build graph.
+  const nodes = [{
+    id: '__root__',
+    label: data.subnet || 'network',
+    shape: 'diamond',
+    color: { background: '#f59e0b', border: '#b45309' },
+    font: { color: '#FFFFFF', size: 14, face: 'monospace' },
+    size: 25,
+  }];
+  const edges = [];
+
+  data.hosts.forEach((h) => {
+    const openPorts = h.ports.filter(p => p.state === 'open').length;
+    nodes.push({
+      id: h.ip,
+      label: nodeLabel(h),
+      title: `${h.ip}${h.hostname ? ' (' + h.hostname + ')' : ''}\n${openPorts} open port${openPorts === 1 ? '' : 's'}`,
+      color: { background: nodeColor(h), border: '#0f172a' },
+      font: { color: '#e2e8f0', size: 12 },
+      value: Math.max(openPorts, 1),
+    });
+    edges.push({ from: '__root__', to: h.ip, color: { color: '#334155' } });
+  });
+
+  const network = new vis.Network(
+    $('graph'),
+    { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) },
+    {
+      nodes: {
+        shape: 'dot',
+        scaling: { min: 12, max: 36, label: { enabled: false } },
+        borderWidth: 2,
+      },
+      edges: { smooth: { type: 'continuous' }, width: 1 },
+      physics: {
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: { gravitationalConstant: -60, springLength: 120 },
+        stabilization: { iterations: 200 },
+      },
+      interaction: { hover: true },
+    }
+  );
+
+  network.on('selectNode', (params) => {
+    const id = params.nodes[0];
+    if (id === '__root__') {
+      $('details').innerHTML = '<div class="placeholder">Select a host on the map to see details.</div>';
+      return;
+    }
+    const host = data.hosts.find(h => h.ip === id);
+    if (host) renderDetails(host);
+  });
+}
+
+function renderDetails(host) {
+  const open = host.ports.filter(p => p.state === 'open');
+  const other = host.ports.filter(p => p.state !== 'open');
+
+  let html = `<h2>${esc(host.ip)}</h2>`;
+  html += `<div class="sub">${esc(host.hostname || 'no hostname')} · <span class="badge ${host.status === 'up' ? 'up' : ''}">${esc(host.status)}</span></div>`;
+
+  html += '<dl>';
+  if (host.mac) html += `<dt>MAC</dt><dd>${esc(host.mac)}${host.vendor ? ' <span class="badge">' + esc(host.vendor) + '</span>' : ''}</dd>`;
+  if (host.os) html += `<dt>OS</dt><dd>${esc(host.os)}${host.os_accuracy ? ' <span class="badge">' + host.os_accuracy + '%</span>' : ''}</dd>`;
+  html += '</dl>';
+
+  html += `<h3>Open ports (${open.length})</h3>`;
+  if (open.length === 0) {
+    html += '<div class="placeholder">No open ports.</div>';
+  } else {
+    html += '<table><thead><tr><th>Port</th><th>Service</th><th>Version</th></tr></thead><tbody>';
+    open.forEach(p => {
+      const version = [p.product, p.version, p.extra_info].filter(Boolean).join(' ');
+      html += `<tr>
+        <td class="port">${esc(p.port)}/${esc(p.protocol)}</td>
+        <td>${esc(p.service || '—')}</td>
+        <td>${esc(version)}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  if (other.length > 0) {
+    html += `<h3>Other ports (${other.length})</h3>`;
+    html += '<table><thead><tr><th>Port</th><th>State</th><th>Service</th></tr></thead><tbody>';
+    other.forEach(p => {
+      html += `<tr>
+        <td class="port">${esc(p.port)}/${esc(p.protocol)}</td>
+        <td>${esc(p.state)}</td>
+        <td>${esc(p.service || '—')}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  $('details').innerHTML = html;
+}
+
+// Wire file picker.
+$('fileInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      render(JSON.parse(reader.result));
+    } catch (err) {
+      alert('Could not parse JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
+// Wire clear button.
+$('clearBtn').addEventListener('click', () => {
+  if (confirm('Clear cached network map from this browser?')) {
+    clearStorage();
+  }
+});
+
+// Startup: prefer cached data, then ./nmap.json over HTTP, otherwise empty state.
+const cached = loadFromStorage();
+if (cached) {
+  render(cached);
+} else {
+  fetch('nmap.json', { cache: 'no-store' })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(render)
+    .catch(() => { /* leave the empty-state placeholder visible */ });
+}
+</script>
+
+</body>
+</html>
