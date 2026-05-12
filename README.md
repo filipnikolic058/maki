@@ -1,6 +1,6 @@
 # 🔍 Maki - Network Host Discovery Tool
 
-A fast, multithreaded network host discovery tool written in Go. Supports multiple scanning techniques including ICMP ping, TCP connect scan, and ARP scanning.
+A fast, multithreaded network host discovery tool written in Go. Supports multiple scanning techniques (ICMP ping, TCP connect, ARP), can chain into an `nmap -A -F` map of the discovered hosts, and ships a static HTML viewer to visualize the result.
 
 ## Features
 
@@ -11,6 +11,10 @@ A fast, multithreaded network host discovery tool written in Go. Supports multip
 - **Multithreaded** - Fast concurrent scanning
 - **Cross-platform** - Works on Linux and macOS
 - **Export Results** - Save scan results to text file
+- **Unified host list** - Deduplicated `hosts.txt` of every alive IP across scans, ready for `nmap -iL`
+- **Optional network map** - Chain `nmap -A -F` on the discovered hosts and emit a JSON report
+- **Web viewer** - Static `web/index.html` page renders the JSON as an interactive network graph
+- **Sudo-friendly output** - Files created under `sudo` are chown'd back to the invoking user
 - **Default Subnet** - Quick scanning with 192.168.1.0/24 as default
 - **MAC Address Discovery** - ARP scan displays MAC addresses
 
@@ -30,6 +34,9 @@ Full port list includes: 21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 9
 - `arping` utility for ARP scanning (install via package manager)
   - Linux: `sudo apt install arping` or `sudo yum install arping`
   - macOS: `brew install arping`
+- `nmap` (optional, only needed for the post-scan network map step)
+  - Linux: `sudo apt install nmap` / `sudo pacman -S nmap`
+  - macOS: `brew install nmap`
 
 ### Build from Source
 
@@ -66,6 +73,7 @@ sudo ./maki
 3. For ARP scan (options 3 & 4):
    - Enter your network interface (e.g., `eth0`, `wlan0`, `en0`)
 4. Optionally specify output directory to save results
+5. When an output directory was provided and any host came back alive, you'll be asked whether to **map the network with `nmap -A -F`** — answering yes runs nmap against `hosts.txt` and writes `nmap.json` (and `nmap.xml`) into the same folder.
 
 ### Example Session
 
@@ -142,9 +150,20 @@ Runs ICMP, TCP, and ARP scans sequentially and combines results. Provides the mo
 - **Network interface** must be specified for ARP scans (e.g., eth0, wlan0, en0)
 - Results are displayed in real-time as they're discovered
 
-## Output File Format
+## Output Files
 
-When exporting, results are saved to the specified directory as `result.txt`:
+When an output directory is provided, maki writes the following into it:
+
+| File | Purpose |
+| --- | --- |
+| `result.txt` | Human-readable per-scan results |
+| `hosts.txt` | Deduplicated, sorted list of every alive IP (one per line). Ready for `nmap -iL hosts.txt` |
+| `nmap.xml` | Raw nmap XML output (only if the nmap map step was run) |
+| `nmap.json` | Processed JSON consumed by the web viewer (only if the nmap map step was run) |
+
+When maki is run with `sudo`, all of these files are chown'd back to the invoking user (`$SUDO_UID`/`$SUDO_GID`) so they aren't left root-owned.
+
+### `result.txt`
 ```
 Result of: 192.168.1.0/24
 Scan time: 2025-01-15 14:30:45
@@ -168,6 +187,56 @@ SUMMARY:
   TCP_SCAN: 2 hosts alive
   ARP_SCAN: 2 hosts alive
 ```
+
+### `hosts.txt`
+```
+192.168.1.1
+192.168.1.10
+192.168.1.15
+```
+
+### `nmap.json`
+```json
+{
+  "subnet": "192.168.1.0/24",
+  "timestamp": "2025-01-15T14:31:02Z",
+  "command": "nmap -A -F -iL hosts.txt -oX nmap.xml",
+  "hosts": [
+    {
+      "ip": "192.168.1.1",
+      "hostname": "router.local",
+      "status": "up",
+      "mac": "AA:BB:CC:DD:EE:FF",
+      "vendor": "TP-Link",
+      "os": "Linux 5.x",
+      "os_accuracy": 95,
+      "ports": [
+        { "port": 22, "protocol": "tcp", "state": "open",
+          "service": "ssh", "product": "OpenSSH", "version": "8.0" },
+        { "port": 80, "protocol": "tcp", "state": "open",
+          "service": "http", "product": "nginx", "version": "1.24.0" }
+      ]
+    }
+  ]
+}
+```
+
+## Web Viewer
+
+`web/index.html` is a self-contained static page that renders `nmap.json` as an interactive force-directed graph (vis-network), with a side panel showing the selected host's IP, hostname, MAC + vendor, OS detection, and open-port table.
+
+Two ways to use it:
+
+1. **Open the file directly** — double-click `web/index.html` (or open it as a `file://` URL) and use the **Load nmap.json** button in the header to pick a file from disk.
+2. **Serve over HTTP** — drop `nmap.json` next to `index.html` and serve the folder, e.g.:
+   ```bash
+   cp /path/to/output/nmap.json web/
+   cd web && python3 -m http.server 8000
+   # then open http://localhost:8000
+   ```
+   The page auto-fetches `./nmap.json` on load.
+
+Loaded data is cached in `localStorage` and restored on reload. Use the **Clear saved** button in the header to drop the cached copy.
 
 ## Troubleshooting
 
