@@ -2,9 +2,12 @@
 package output
 
 import (
+	"bytes"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -95,7 +98,37 @@ func (r *Report) Format() string {
 	return sb.String()
 }
 
-// SaveToFile writes the report to the specified directory.
+// UniqueHosts returns a sorted, deduplicated list of IPs that were
+// found alive across all scans in the report.
+func (r *Report) UniqueHosts() []string {
+	seen := make(map[string]struct{})
+	for _, scan := range r.Scans {
+		for _, result := range scan.Results {
+			if result.Alive {
+				seen[result.IP] = struct{}{}
+			}
+		}
+	}
+
+	hosts := make([]string, 0, len(seen))
+	for ip := range seen {
+		hosts = append(hosts, ip)
+	}
+
+	sort.Slice(hosts, func(i, j int) bool {
+		ipI := net.ParseIP(hosts[i])
+		ipJ := net.ParseIP(hosts[j])
+		if ipI == nil || ipJ == nil {
+			return hosts[i] < hosts[j]
+		}
+		return bytes.Compare(ipI.To16(), ipJ.To16()) < 0
+	})
+
+	return hosts
+}
+
+// SaveToFile writes the report and the deduplicated hosts list to the
+// specified directory. It returns the path to result.txt.
 func (r *Report) SaveToFile(dirPath string) (string, error) {
 	// Expand home directory if needed
 	if strings.HasPrefix(dirPath, "~") {
@@ -121,6 +154,17 @@ func (r *Report) SaveToFile(dirPath string) (string, error) {
 
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		return "", fmt.Errorf("cannot write file: %v", err)
+	}
+
+	// Write hosts.txt: one IP per line, suitable for `nmap -iL`.
+	hostsPath := filepath.Join(dirPath, "hosts.txt")
+	hosts := r.UniqueHosts()
+	var hostsContent string
+	if len(hosts) > 0 {
+		hostsContent = strings.Join(hosts, "\n") + "\n"
+	}
+	if err := os.WriteFile(hostsPath, []byte(hostsContent), 0644); err != nil {
+		return "", fmt.Errorf("cannot write hosts file: %v", err)
 	}
 
 	return filePath, nil

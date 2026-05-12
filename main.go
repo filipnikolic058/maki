@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -82,7 +83,9 @@ func main() {
 		if err != nil {
 			fmt.Printf("\n❌ Error saving results: %v\n", err)
 		} else {
+			hostsPath := filepath.Join(filepath.Dir(filePath), "hosts.txt")
 			fmt.Printf("\n✅ Results saved to: %s\n", filePath)
+			fmt.Printf("✅ Host list saved to: %s (use with `nmap -iL %s`)\n", hostsPath, hostsPath)
 		}
 	}
 }
