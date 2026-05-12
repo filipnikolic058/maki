@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -129,10 +131,15 @@ func (r *Report) UniqueHosts() []string {
 
 // SaveToFile writes the report and the deduplicated hosts list to the
 // specified directory. It returns the path to result.txt.
+//
+// When invoked under sudo, newly-created files and directories are
+// chown'd back to the invoking user (SUDO_UID/SUDO_GID) so output is
+// not left root-owned. `~` is expanded relative to SUDO_USER's home
+// when running under sudo.
 func (r *Report) SaveToFile(dirPath string) (string, error) {
 	// Expand home directory if needed
 	if strings.HasPrefix(dirPath, "~") {
-		home, err := os.UserHomeDir()
+		home, err := invokingUserHome()
 		if err != nil {
 			return "", fmt.Errorf("cannot expand home directory: %v", err)
 		}
@@ -142,9 +149,20 @@ func (r *Report) SaveToFile(dirPath string) (string, error) {
 	// Clean the path
 	dirPath = filepath.Clean(dirPath)
 
+	// Capture any path components that don't exist yet so we can chown
+	// them after MkdirAll creates them.
+	createdDirs := missingPathComponents(dirPath)
+
 	// Check if directory exists, create if not
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return "", fmt.Errorf("cannot create directory: %v", err)
+	}
+
+	uid, gid, hasSudoOwner := sudoOwner()
+	if hasSudoOwner {
+		for _, d := range createdDirs {
+			_ = os.Chown(d, uid, gid)
+		}
 	}
 
 	// Create the result file
@@ -154,6 +172,9 @@ func (r *Report) SaveToFile(dirPath string) (string, error) {
 
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		return "", fmt.Errorf("cannot write file: %v", err)
+	}
+	if hasSudoOwner {
+		_ = os.Chown(filePath, uid, gid)
 	}
 
 	// Write hosts.txt: one IP per line, suitable for `nmap -iL`.
@@ -166,8 +187,60 @@ func (r *Report) SaveToFile(dirPath string) (string, error) {
 	if err := os.WriteFile(hostsPath, []byte(hostsContent), 0644); err != nil {
 		return "", fmt.Errorf("cannot write hosts file: %v", err)
 	}
+	if hasSudoOwner {
+		_ = os.Chown(hostsPath, uid, gid)
+	}
 
 	return filePath, nil
+}
+
+// sudoOwner returns the UID/GID of the user who invoked sudo, if any.
+func sudoOwner() (int, int, bool) {
+	uidStr := os.Getenv("SUDO_UID")
+	gidStr := os.Getenv("SUDO_GID")
+	if uidStr == "" || gidStr == "" {
+		return 0, 0, false
+	}
+	uid, err := strconv.Atoi(uidStr)
+	if err != nil {
+		return 0, 0, false
+	}
+	gid, err := strconv.Atoi(gidStr)
+	if err != nil {
+		return 0, 0, false
+	}
+	return uid, gid, true
+}
+
+// invokingUserHome returns the home directory of the user who invoked
+// the program. Under sudo, this is SUDO_USER's home rather than root's.
+func invokingUserHome() (string, error) {
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		if u, err := user.Lookup(sudoUser); err == nil && u.HomeDir != "" {
+			return u.HomeDir, nil
+		}
+	}
+	return os.UserHomeDir()
+}
+
+// missingPathComponents returns the list of ancestor directories of p
+// (including p itself) that do not yet exist on disk, ordered from
+// outermost to innermost.
+func missingPathComponents(p string) []string {
+	var missing []string
+	cur := p
+	for {
+		if _, err := os.Stat(cur); err == nil {
+			break
+		}
+		missing = append([]string{cur}, missing...)
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		cur = parent
+	}
+	return missing
 }
 
 // countAlive counts the number of alive hosts in results.
